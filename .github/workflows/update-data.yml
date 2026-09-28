@@ -11,6 +11,7 @@ on:
   push:
     paths:
       - "scripts/fetch_data.py"
+      - "scripts/fetch_housing.py"
       - ".github/workflows/update-data.yml"
 
 permissions:
@@ -26,17 +27,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install yfinance
-        run: pip install yfinance
+      - name: Install packages
+        run: pip install yfinance requests
 
       - name: Fetch prices
         run: python scripts/fetch_data.py
+
+      # 주택가격(KB) 수집이 실패해도 ETF 데이터 갱신은 계속되도록 continue-on-error
+      - name: Fetch housing price index
+        continue-on-error: true
+        run: python scripts/fetch_housing.py
 
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/prices.json
+          git add data/prices.json data/housing.json 2>/dev/null || git add data/prices.json
           if git diff --cached --quiet; then
             echo "변경 없음"
           else
