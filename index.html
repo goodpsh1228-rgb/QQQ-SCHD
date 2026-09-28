@@ -35,7 +35,7 @@
         <p class="note">ETF 운용보수는 가격에 이미 반영되어 있습니다. 여기에는 환전·수수료 등 <b>추가</b> 비용을 연율로 넣으세요.</p>
         <div id="costRows"></div>
         <label class="field">
-          <span>리밸런싱 거래비용 (매매금액 대비 %)</span>
+          <span>매매 거래비용 (매수·매도 금액 대비 %)</span>
           <input type="number" id="tradeCost" value="0.1" min="0" max="5" step="0.05">
         </label>
       </section>
@@ -51,10 +51,40 @@
             <option value="yearly" selected>매년</option>
           </select>
         </label>
+      </section>
+
+      <section>
+        <h2>투자금</h2>
         <label class="field">
-          <span>초기 투자금 (원)</span>
-          <input type="number" id="initial" value="10000000" min="1" step="1000000">
+          <span>처음 넣는 돈 (원)</span>
+          <input type="number" id="initial" value="10000000" min="0" step="1000000">
         </label>
+        <label class="field">
+          <span>매월 적립금 (원, 0이면 거치식)</span>
+          <input type="number" id="monthly" value="0" min="0" step="100000">
+        </label>
+        <p class="note">적립금은 매월 첫 거래일에 목표 비중대로 매수합니다.</p>
+      </section>
+
+      <section>
+        <h2>세금</h2>
+        <label class="check"><input type="checkbox" id="taxOn"> 세금 반영 (해외주식 직투, 일반 계좌)</label>
+        <div id="taxFields">
+          <label class="field">
+            <span>배당소득세 (%) — 미국 원천징수</span>
+            <input type="number" id="taxDiv" value="15" min="0" max="50" step="0.1">
+          </label>
+          <label class="field">
+            <span>양도소득세 (%) — 지방세 포함</span>
+            <input type="number" id="taxCap" value="22" min="0" max="50" step="0.1">
+          </label>
+          <label class="field">
+            <span>양도세 연간 기본공제 (원)</span>
+            <input type="number" id="taxDeduction" value="2500000" min="0" step="500000">
+          </label>
+          <label class="check"><input type="checkbox" id="taxLiquidate" checked> 종료일에 전부 매도한다고 보고 양도세 계산</label>
+          <p class="note">리밸런싱으로 판 이익은 그해 손익을 합산해 다음 해 초에 납부한 것으로 계산합니다 (실제 납부는 5월). 취득가는 평균단가 기준이며, 환율 변동과 금융소득종합과세는 반영하지 않습니다.</p>
+        </div>
       </section>
 
       <section>
@@ -92,7 +122,7 @@
       </section>
 
       <section class="card">
-        <div class="card-head"><h2>낙폭 (고점 대비 하락률)</h2></div>
+        <div class="card-head"><h2>낙폭 (고점 대비 하락률) <span class="hint" id="ddHint"></span></h2></div>
         <div class="chart-box short"><canvas id="ddChart"></canvas></div>
       </section>
 

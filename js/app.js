@@ -60,7 +60,8 @@
     });
 
     // 나머지 입력칸들: 값이 바뀌면 다시 계산
-    ['tradeCost', 'rebalance', 'initial', 'logScale', 'showBench'].concat(
+    ['tradeCost', 'rebalance', 'initial', 'monthly', 'logScale', 'showBench',
+     'taxOn', 'taxDiv', 'taxCap', 'taxDeduction', 'taxLiquidate'].concat(
       TICKERS.map(function (t) { return 'c-' + t; })
     ).forEach(function (id) {
       $(id).addEventListener('input', scheduleUpdate);
@@ -140,7 +141,15 @@
       costs: costs,
       tradeCost: (Number($('tradeCost').value) || 0) / 100,
       rebalance: $('rebalance').value,
-      initial: Number($('initial').value) || 10000000,
+      initial: Math.max(0, Number($('initial').value) || 0),
+      monthly: Math.max(0, Number($('monthly').value) || 0),
+      tax: {
+        enabled: $('taxOn').checked,
+        dividend: (Number($('taxDiv').value) || 0) / 100,
+        capital: (Number($('taxCap').value) || 0) / 100,
+        deduction: Math.max(0, Number($('taxDeduction').value) || 0),
+        liquidate: $('taxLiquidate').checked
+      },
       start: $('startDate').value,
       end: $('endDate').value
     };
@@ -168,6 +177,8 @@
       (s.rawTotal !== 100 && s.rawTotal > 0 ? ' → 비율대로 환산해 계산합니다' : '');
     sumEl.classList.toggle('warn', s.rawTotal !== 100);
     if (s.rawTotal === 0) { setStatus('비중을 하나 이상 입력하세요.', true); return; }
+    if (s.initial === 0 && s.monthly === 0) { setStatus('처음 넣는 돈이나 매월 적립금을 입력하세요.', true); return; }
+    $('taxFields').hidden = !s.tax.enabled;
 
     // 선택한 종목의 데이터가 있는 기간으로 날짜 제한
     const range = availableRange(activeTickers(s.weights));
@@ -181,14 +192,15 @@
     if (!port) { setStatus('해당 기간에 데이터가 부족합니다. 기간을 넓혀주세요.', true); return; }
     setStatus('');
 
-    // 비교용: 각 ETF 100% 보유 (같은 기간·같은 비용 조건)
+    // 비교용: 각 ETF 100% 보유 (같은 기간·같은 비용·같은 적립금·같은 세금 조건)
     const series = [{ name: '내 포트폴리오', color: cssVar('--series-1'), res: port, main: true }];
     const skipped = [];
     TICKERS.forEach(function (t, i) {
       const w = {}; w[t] = 1;
       const r = Backtest.runBacktest(DATA.tickers, {
         weights: w, costs: s.costs, tradeCost: s.tradeCost, rebalance: 'none',
-        initial: s.initial, start: port.dates[0], end: port.dates[port.dates.length - 1]
+        initial: s.initial, monthly: s.monthly, tax: s.tax,
+        start: port.dates[0], end: port.dates[port.dates.length - 1]
       });
       if (r && r.dates[0] === port.dates[0]) {
         series.push({ name: t + ' 100%', ticker: t, color: cssVar('--series-' + (i + 2)), res: r });
@@ -196,40 +208,68 @@
         skipped.push(t);
       }
     });
+    // 수익률 지표는 "수익률 지수(index)"로 계산 → 적립금이 들어와도 수익률이 부풀려지지 않음
     series.forEach(function (x) {
-      x.stats = Backtest.computeStats(x.res.dates, x.res.values);
-      x.dd = Backtest.drawdownSeries(x.res.values);
-      x.annual = Backtest.annualReturns(x.res.dates, x.res.values);
-      x.trailing = Backtest.trailingReturns(x.res.dates, x.res.values, PERIODS);
+      x.stats = Backtest.computeStats(x.res.dates, x.res.index);
+      x.dd = Backtest.drawdownSeries(x.res.index);
+      x.annual = Backtest.annualReturns(x.res.dates, x.res.index);
+      x.trailing = Backtest.trailingReturns(x.res.dates, x.res.index, PERIODS);
     });
+    // IRR은 적립식이거나 세금을 반영할 때 의미가 있음 (거치식·세금 없음이면 CAGR과 같음)
+    const showIrr = s.monthly > 0 || s.tax.enabled;
 
     const showBench = $('showBench').checked;
     const visible = showBench ? series : series.slice(0, 1);
 
-    renderTiles(series[0], s);
-    renderValueChart(port.dates, visible);
+    renderTiles(series[0], s, showIrr);
+    renderValueChart(port.dates, visible, s.monthly > 0);
+    $('ddHint').textContent = s.monthly > 0 ? '(적립금 효과를 뺀 수익률 기준)' : '';
     renderDrawdownChart(port.dates, visible);
     renderAnnualChart(visible);
-    renderStatsTable(series);
+    renderStatsTable(series, s, showIrr);
     renderPeriodTable(series);
 
+    const noDivData = s.tax.enabled && TICKERS.some(function (t) { return !DATA.tickers[t].divs; });
     $('foot').textContent =
       '데이터: ' + DATA.source + ' · 갱신일 ' + DATA.updated +
       (skipped.length ? ' · ' + skipped.join(', ') + '는 이 기간 데이터가 없어 비교에서 제외' : '') +
-      ' · 리밸런싱 ' + port.rebalanceCount + '회 · 세금은 반영하지 않았습니다. 과거 성과가 미래 수익을 보장하지 않습니다.';
+      ' · 리밸런싱 ' + port.rebalanceCount + '회' +
+      ' · 거래비용 ' + fmtMoneyKo(port.paid.fee) + ', 추가 비용 ' + fmtMoneyKo(port.paid.extraCost) +
+      (s.tax.enabled ? '' : ' · 세금 미반영') +
+      (noDivData ? ' · ⚠ 배당 데이터가 없어 배당소득세를 계산하지 못했습니다 (데이터 갱신 필요)' : '') +
+      ' · 과거 성과가 미래 수익을 보장하지 않습니다.';
   }
 
   // ───────────────────────── 5. 결과 표시 함수들 ─────────────────────────
 
-  function renderTiles(p, s) {
+  function renderTiles(p, s, showIrr) {
     const st = p.stats;
+    const r = p.res;
+    const profit = r.finalValue - r.invested;
+    const months = s.monthly > 0 ? Math.round((r.invested - s.initial) / s.monthly) : 0;
+    const taxTotal = r.paid.dividendTax + r.paid.capitalTax;
     const tiles = [
-      { label: '최종 금액', value: fmtMoneyKo(st.finalValue), detail: '초기 ' + fmtMoneyKo(s.initial) },
-      { label: '총수익률', value: fmtPct(st.totalReturn), detail: st.years.toFixed(1) + '년' },
-      { label: '연평균 수익률 (CAGR)', value: fmtPct(st.cagr), detail: '매년 이만큼 복리로 불어난 셈' },
-      { label: '최대낙폭 (MDD)', value: fmtPct(st.mdd), detail: st.mddPeak + ' → ' + st.mddTrough },
-      { label: '변동성 (연)', value: fmtPct(st.volatility, false), detail: '샤프 ' + st.sharpe.toFixed(2) }
+      { label: '투자원금', value: fmtMoneyKo(r.invested),
+        detail: s.monthly > 0 ? '처음 ' + fmtMoneyKo(s.initial) + ' + 월 ' + fmtMoneyKo(s.monthly) + ' × ' + months + '회'
+                              : st.years.toFixed(1) + '년 거치' },
+      { label: '최종 금액', value: fmtMoneyKo(r.finalValue),
+        detail: s.tax.enabled ? (s.tax.liquidate ? '전부 매도·양도세 정산 후' : '보유 중 평가금액 (미실현 이익 세금 전)') : '세전 평가금액' },
+      { label: '수익금', value: (profit >= 0 ? '+' : '−') + fmtMoneyKo(Math.abs(profit)),
+        detail: '원금 대비 ' + fmtPct(r.invested > 0 ? profit / r.invested : 0) },
+      { label: '연평균 수익률 (CAGR)', value: fmtPct(st.cagr),
+        detail: s.monthly > 0 ? '운용 성과 기준 (적립 시점 영향 제외)' : '매년 이만큼 복리로 불어난 셈' }
     ];
+    if (showIrr && r.irr !== null) {
+      tiles.push({ label: '실제 연수익률 (IRR)', value: fmtPct(r.irr),
+        detail: s.monthly > 0 ? '돈 넣은 시점' + (s.tax.enabled ? '·세금' : '') + '까지 반영' : '세금까지 반영' });
+    }
+    tiles.push({ label: '최대낙폭 (MDD)', value: fmtPct(st.mdd), detail: st.mddPeak + ' → ' + st.mddTrough });
+    if (s.tax.enabled) {
+      tiles.push({ label: '낸 세금 합계', value: fmtMoneyKo(taxTotal),
+        detail: '배당세 ' + fmtMoneyKo(r.paid.dividendTax) + ' · 양도세 ' + fmtMoneyKo(r.paid.capitalTax) });
+    }
+    tiles.push({ label: '변동성 (연)', value: fmtPct(st.volatility, false), detail: '샤프 ' + st.sharpe.toFixed(2) });
+
     $('tiles').innerHTML = tiles.map(function (t) {
       return '<div class="tile"><div class="label">' + t.label + '</div>' +
         '<div class="value">' + t.value + '</div><div class="detail">' + t.detail + '</div></div>';
@@ -252,14 +292,32 @@
     return idx.map(function (i) { const v = m.get(dates[i]); return v === undefined ? null : v; });
   }
 
-  function renderValueChart(dates, series) {
+  function renderValueChart(dates, series, showPrincipal) {
     const idx = thinIndices(dates.length);
     const labels = idx.map(function (i) { return dates[i]; });
+    const log = $('logScale').checked;
+    // 로그 스케일에서는 0을 그릴 수 없으므로 빈칸(null) 처리
+    const clean = function (arr) { return arr.map(function (v) { return log && !(v > 0) ? null : v; }); };
     const datasets = series.map(function (x) {
-      return lineDataset(x, pick(dates, idx, x.res, x.res.values));
+      return lineDataset(x, clean(pick(dates, idx, x.res, x.res.values)));
     });
+    if (showPrincipal) {
+      // 투자원금 누적선 (회색 점선): 이 선과 계좌 금액의 차이가 수익금
+      const main = series[0].res;
+      datasets.push({
+        label: '투자원금',
+        data: clean(pick(dates, idx, main, main.principal)),
+        borderColor: cssVar('--text-muted'),
+        backgroundColor: cssVar('--text-muted'),
+        borderWidth: 1.5,
+        borderDash: [5, 4],
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        stepped: true
+      });
+    }
     drawChart('valueChart', 'line', labels, datasets, {
-      yType: $('logScale').checked ? 'logarithmic' : 'linear',
+      yType: log ? 'logarithmic' : 'linear',
       yFormat: fmtMoneyShort,
       tipFormat: fmtMoney
     });
@@ -301,20 +359,26 @@
     });
   }
 
-  function renderStatsTable(series) {
-    const head = '<thead><tr><th>구분</th><th>최종 금액</th><th>총수익률</th><th>CAGR</th>' +
-      '<th>MDD</th><th>MDD 고점→저점</th><th>MDD 회복</th><th>변동성</th><th>샤프</th></tr></thead>';
+  function renderStatsTable(series, s, showIrr) {
+    const taxOn = s.tax.enabled;
+    const head = '<thead><tr><th>구분</th><th>최종 금액</th><th>수익률(원금 대비)</th><th>CAGR</th>' +
+      (showIrr ? '<th>IRR</th>' : '') +
+      '<th>MDD</th><th>MDD 고점→저점</th><th>MDD 회복</th><th>변동성</th><th>샤프</th>' +
+      (taxOn ? '<th>세금 합계</th>' : '') + '</tr></thead>';
     const rows = series.map(function (x) {
       const st = x.stats;
+      const r = x.res;
       return '<tr><td>' + nameCell(x) + '</td>' +
-        '<td>' + fmtMoney(st.finalValue) + '</td>' +
-        '<td>' + colored(st.totalReturn) + '</td>' +
+        '<td>' + fmtMoney(r.finalValue) + '</td>' +
+        '<td>' + colored(r.invested > 0 ? r.finalValue / r.invested - 1 : 0) + '</td>' +
         '<td>' + colored(st.cagr) + '</td>' +
+        (showIrr ? '<td>' + (r.irr === null ? '—' : colored(r.irr)) + '</td>' : '') +
         '<td>' + colored(st.mdd) + '</td>' +
         '<td class="muted">' + st.mddPeak + ' → ' + st.mddTrough + '</td>' +
         '<td class="muted">' + (st.mddRecovery || '미회복') + '</td>' +
         '<td>' + fmtPct(st.volatility, false) + '</td>' +
-        '<td>' + st.sharpe.toFixed(2) + '</td></tr>';
+        '<td>' + st.sharpe.toFixed(2) + '</td>' +
+        (taxOn ? '<td>' + fmtMoney(r.paid.dividendTax + r.paid.capitalTax) + '</td>' : '') + '</tr>';
     }).join('');
     $('statsTable').innerHTML = head + '<tbody>' + rows + '</tbody>';
   }

@@ -94,12 +94,14 @@ h2 { font-size: 1rem; margin: 0 0 10px; }
   border-radius: 12px;
   padding: 16px;
 }
-.panel { align-self: start; position: sticky; top: 12px; }
-@media (max-width: 860px) { .panel { position: static; } }
+.panel { align-self: start; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; }
+@media (max-width: 860px) { .panel { position: static; max-height: none; } }
 .panel section + section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 
 /* ── 입력 요소 ── */
 .field { display: block; margin: 8px 0; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; margin: 6px 0; }
+#taxFields[hidden] { display: none; }
 .field span { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 2px; }
 input[type="number"], input[type="date"], select {
   width: 100%;
@@ -148,7 +150,7 @@ input[type="number"], input[type="date"], select {
 .status.error { color: var(--bad); }
 .status:empty { display: none; }
 
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .tile {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -156,7 +158,7 @@ input[type="number"], input[type="date"], select {
   padding: 12px 14px;
 }
 .tile .label { font-size: 0.82rem; color: var(--text-secondary); }
-.tile .value { font-size: 1.5rem; font-weight: 650; margin-top: 2px; }
+.tile .value { font-size: 1.35rem; font-weight: 650; margin-top: 2px; white-space: nowrap; }
 .tile .detail { font-size: 0.78rem; color: var(--text-muted); }
 
 .card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
