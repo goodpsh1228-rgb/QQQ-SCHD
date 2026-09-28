@@ -1,0 +1,45 @@
+# 가격 데이터(data/prices.json)를 자동으로 갱신하는 워크플로
+#  - 매주 월요일(한국시간 오전 9시경) 자동 실행
+#  - Actions 탭에서 "Run workflow" 버튼으로 수동 실행 가능
+#  - 데이터 수집 스크립트나 이 파일이 바뀌어 push될 때도 실행
+name: Update price data
+
+on:
+  schedule:
+    - cron: "7 0 * * 1"
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/fetch_data.py"
+      - ".github/workflows/update-data.yml"
+
+permissions:
+  contents: write # 갱신된 데이터를 저장소에 커밋하기 위한 권한
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install yfinance
+        run: pip install yfinance
+
+      - name: Fetch prices
+        run: python scripts/fetch_data.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/prices.json
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "Update price data"
+            git push
+          fi

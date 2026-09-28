@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QQQ·SCHD·SPY 백테스트</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 차트 라이브러리 Chart.js (CDN에서 불러옴) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.js"></script>
+</head>
+<body>
+  <header class="page-header">
+    <h1>QQQ · SCHD · SPY 포트폴리오 백테스트</h1>
+    <p class="sub">비중과 비용을 바꿔가며 수익률과 최대낙폭(MDD)을 확인하세요. 배당은 재투자한 것으로 계산합니다.</p>
+  </header>
+
+  <main class="layout">
+    <!-- ───────── 왼쪽: 설정 패널 ───────── -->
+    <aside class="panel" id="controls">
+      <section>
+        <h2>비중</h2>
+        <div class="presets" id="weightPresets">
+          <button type="button" data-w="100,0,0">QQQ 100</button>
+          <button type="button" data-w="50,50,0">QQQ·SCHD 5:5</button>
+          <button type="button" data-w="34,33,33">3등분</button>
+          <button type="button" data-w="0,0,100">SPY 100</button>
+        </div>
+        <!-- 티커별 슬라이더는 app.js가 채움 -->
+        <div id="weightRows"></div>
+        <p class="sum" id="weightSum"></p>
+      </section>
+
+      <section>
+        <h2>비용 <span class="hint">(연 %)</span></h2>
+        <p class="note">ETF 운용보수는 가격에 이미 반영되어 있습니다. 여기에는 환전·수수료 등 <b>추가</b> 비용을 연율로 넣으세요.</p>
+        <div id="costRows"></div>
+        <label class="field">
+          <span>리밸런싱 거래비용 (매매금액 대비 %)</span>
+          <input type="number" id="tradeCost" value="0.1" min="0" max="5" step="0.05">
+        </label>
+      </section>
+
+      <section>
+        <h2>운용 방식</h2>
+        <label class="field">
+          <span>리밸런싱 주기</span>
+          <select id="rebalance">
+            <option value="none">안 함 (매수 후 보유)</option>
+            <option value="monthly">매월</option>
+            <option value="quarterly">분기마다</option>
+            <option value="yearly" selected>매년</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>초기 투자금 (원)</span>
+          <input type="number" id="initial" value="10000000" min="1" step="1000000">
+        </label>
+      </section>
+
+      <section>
+        <h2>기간</h2>
+        <div class="presets" id="periodPresets">
+          <button type="button" data-years="0" class="active">전체</button>
+          <button type="button" data-years="10">10년</button>
+          <button type="button" data-years="5">5년</button>
+          <button type="button" data-years="3">3년</button>
+          <button type="button" data-years="1">1년</button>
+        </div>
+        <div class="date-row">
+          <label class="field"><span>시작일</span><input type="date" id="startDate"></label>
+          <label class="field"><span>종료일</span><input type="date" id="endDate"></label>
+        </div>
+        <p class="note" id="rangeNote"></p>
+      </section>
+    </aside>
+
+    <!-- ───────── 오른쪽: 결과 ───────── -->
+    <div class="results">
+      <p class="status" id="status">데이터를 불러오는 중…</p>
+
+      <div class="tiles" id="tiles"></div>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>자산 가치 추이</h2>
+          <div class="toggles">
+            <label><input type="checkbox" id="logScale"> 로그 스케일</label>
+            <label><input type="checkbox" id="showBench" checked> 단일 ETF 비교선</label>
+          </div>
+        </div>
+        <div class="chart-box"><canvas id="valueChart"></canvas></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>낙폭 (고점 대비 하락률)</h2></div>
+        <div class="chart-box short"><canvas id="ddChart"></canvas></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>연도별 수익률</h2></div>
+        <div class="chart-box"><canvas id="annualChart"></canvas></div>
+        <p class="note">* 표시된 연도는 1년 중 일부 기간만 포함됩니다.</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>성과 비교</h2></div>
+        <div class="table-wrap"><table id="statsTable"></table></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><h2>기간별 수익률 <span class="hint">(종료일 기준, 연평균 / MDD)</span></h2></div>
+        <div class="table-wrap"><table id="periodTable"></table></div>
+      </section>
+
+      <footer class="foot" id="foot"></footer>
+    </div>
+  </main>
+
+  <script src="js/backtest.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
