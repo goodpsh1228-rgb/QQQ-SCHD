@@ -7,11 +7,19 @@
  *   ETF 자체 운용보수(QQQ 0.20%, SCHD 0.06%, SPY 0.0945%)는 이미 가격에 반영돼 있다.
  *   그래서 여기서 말하는 "비용"은 그 외의 추가 비용(증권사 수수료, 환전 비용 등)이다.
  *
- * 세금 (한국 거주자가 일반 계좌로 미국 ETF에 직접 투자하는 경우를 단순화):
- *   - 배당소득세: 배당을 받을 때 원천징수(기본 15%), 세후 배당을 재투자
- *   - 양도소득세: 1년 동안 매도로 생긴 이익(손실과 상계)에서 기본공제(250만원)를 뺀 금액의 22%
- *                 실제 납부는 다음 해 5월이지만, 여기서는 다음 해 첫 거래일에 보유 자산을 팔아 낸다고 가정
- *                 취득가는 평균단가 방식으로 계산
+ * 세금 (한국 거주자 기준, 단순화한 모델) — tax.account 로 계좌 종류를 고른다
+ *   'overseas' 해외주식 직접투자(일반 계좌)
+ *     - 배당소득세: 배당을 받을 때 원천징수(기본 15%), 세후 배당을 재투자
+ *     - 양도소득세: 1년 동안 매도로 생긴 이익(손실과 상계)에서 기본공제(250만원)를 뺀 금액의 22%
+ *                   실제 납부는 다음 해 5월이지만, 여기서는 다음 해 첫 거래일에 보유 자산을 팔아 낸다고 가정
+ *                   취득가는 평균단가 방식으로 계산
+ *   'isa' ISA(중개형) — 같은 지수를 따르는 국내 상장 ETF로 투자한다고 가정
+ *     - 운용 중: 미국 배당에 대한 원천징수(15%)만 펀드 단계에서 빠지고, 매매차익은 과세 안 함
+ *     - 종료일 해지: (최종 금액 - 투자원금 - 비과세 한도)의 9.9%
+ *   'pension' 연금저축 — 국내 상장 ETF로 투자한다고 가정
+ *     - 운용 중: ISA와 같음 (배당 원천징수만)
+ *     - 매년 납입액 중 세액공제 한도(600만원)까지 세액공제율만큼 다음 해 환급 (환급금은 계좌 밖으로)
+ *     - 종료일 인출: (최종 금액 - 세액공제 안 받은 납입액)에 연금소득세율(또는 중도해지 16.5%)
  */
 (function (root) {
   'use strict';
@@ -107,8 +115,10 @@
     const freq = options.rebalance || 'none';
     const tax = options.tax || {};
     const taxOn = !!tax.enabled;
+    const account = taxOn ? (tax.account || 'overseas') : 'none';
     const divRate = taxOn ? (tax.dividend || 0) : 0;
-    const capRate = taxOn ? (tax.capital || 0) : 0;
+    // 매년 양도세를 내는 건 해외 직투(일반 계좌)뿐. ISA·연금은 운용 중 매매차익 과세 없음
+    const capRate = account === 'overseas' ? (tax.capital || 0) : 0;
     const deduction = tax.deduction || 0;
 
     // 상태 변수
@@ -120,6 +130,7 @@
     let invested = 0;
     let rebalanceCount = 0;
     const flows = [];     // IRR 계산용 입출금 기록 [{date, amount}]
+    const contribByYear = {}; // 연도별 납입액 (연금저축 세액공제 계산용)
 
     // 목표 비중대로 amount만큼 매수
     function buy(amount, date) {
@@ -129,6 +140,8 @@
       });
       paid.fee += amount * tc;
       invested += amount;
+      const y = date.slice(0, 4);
+      contribByYear[y] = (contribByYear[y] || 0) + amount;
       flows.push({ date: date, amount: -amount });
     }
 
@@ -170,7 +183,7 @@
       });
 
       // 2) 해가 바뀌면 지난해 양도소득세 납부
-      if (newYear && taxOn) {
+      if (newYear && account === 'overseas') {
         const taxable = realizedYTD - deduction;
         realizedYTD = 0;
         if (taxable > 0) {
@@ -227,17 +240,41 @@
       return s;
     }
 
-    // 마지막 날: 아직 안 낸 올해 양도세 + (선택) 전량 매도 시 양도세
+    // 마지막 날 세금 정산 (계좌 종류별)
+    const lastDate = dates[dates.length - 1];
     const endValue = values[values.length - 1];
     let unrealized = 0;
     tickers.forEach(function (t) { unrealized += holdings[t] - basis[t]; });
-    let finalTax = 0;
-    if (taxOn) {
+    let finalTax = 0;       // 해외 직투: 마지막 해 양도세
+    let exitTax = 0;        // ISA·연금: 해지·인출할 때 내는 세금
+    let refund = 0;         // 연금저축 세액공제 환급금 합계
+    const refundFlows = [];
+
+    if (account === 'overseas') {
+      // 올해 이미 확정된 이익 + (전량 매도 가정 시) 아직 안 판 이익
       const gains = realizedYTD + (tax.liquidate ? unrealized : 0);
       finalTax = Math.max(0, gains - deduction) * capRate;
+    } else if (account === 'isa') {
+      const profit = endValue - invested;
+      exitTax = Math.max(0, profit - (tax.isaExempt || 0)) * (tax.isaRate || 0);
+    } else if (account === 'pension') {
+      let credited = 0;
+      Object.keys(contribByYear).forEach(function (y) {
+        const c = Math.min(contribByYear[y], tax.creditLimit || 0);
+        credited += c;
+        const r = c * (tax.creditRate || 0);
+        refund += r;
+        // 환급은 다음 해 연말정산(2월경)에 받음. 종료일 이후면 종료일에 받은 것으로 처리
+        const when = (Number(y) + 1) + '-02-15';
+        if (r > 0) refundFlows.push({ date: when < lastDate ? when : lastDate, amount: r });
+      });
+      const taxFree = invested - credited;   // 세액공제 안 받은 납입액은 인출 시 비과세
+      exitTax = Math.max(0, endValue - taxFree) * (tax.pensionRate || 0);
     }
-    const finalValue = endValue - finalTax;
-    flows.push({ date: dates[dates.length - 1], amount: finalValue });
+
+    const finalValue = endValue - finalTax - exitTax;
+    refundFlows.forEach(function (f) { flows.push(f); });
+    flows.push({ date: lastDate, amount: finalValue });
 
     return {
       dates: dates,
@@ -245,15 +282,20 @@
       principal: principal,
       index: index,
       tickers: tickers,
+      account: account,
       invested: invested,
+      contribByYear: contribByYear,
       endValue: endValue,           // 세금 정산 전 계좌 금액
-      finalValue: finalValue,       // 최종 양도세까지 뺀 금액
+      finalValue: finalValue,       // 마지막 세금까지 뺀 계좌 금액
+      refund: refund,               // 연금저축 세액공제 환급금 (계좌 밖)
+      totalWealth: finalValue + refund,
       unrealized: unrealized,
       paid: {
         fee: paid.fee,
         extraCost: paid.extraCost,
         dividendTax: paid.dividendTax,
-        capitalTax: paid.capitalTax + finalTax
+        capitalTax: paid.capitalTax + finalTax,
+        exitTax: exitTax
       },
       irr: xirr(flows),
       rebalanceCount: rebalanceCount

@@ -13,6 +13,8 @@
   const MAX_POINTS = 2000;         // 차트에 그릴 최대 점 개수 (많으면 느려져서 솎아냄)
 
   let DATA = null;                 // prices.json 내용
+  let HOUSING = null;              // housing.json 내용 (없으면 주택 비교 생략)
+  const housingCache = {};         // 월간 주택지수를 일별로 펼친 결과 보관
   let activePreset = 0;            // 선택된 기간 프리셋(0=전체, N=최근 N년). 날짜를 직접 고르면 null
   const charts = {};               // 생성된 Chart.js 객체 보관 (다시 그릴 때 파괴하기 위해)
 
@@ -61,13 +63,20 @@
 
     // 나머지 입력칸들: 값이 바뀌면 다시 계산
     ['tradeCost', 'rebalance', 'initial', 'monthly', 'logScale', 'showBench',
-     'taxOn', 'taxDiv', 'taxCap', 'taxDeduction', 'taxLiquidate'].concat(
+     'taxOn', 'account', 'taxDiv', 'taxCap', 'taxDeduction', 'taxLiquidate',
+     'isaExempt', 'isaRate', 'creditRate', 'creditLimit', 'pensionRate', 'housing'].concat(
       TICKERS.map(function (t) { return 'c-' + t; })
     ).forEach(function (id) {
       $(id).addEventListener('input', scheduleUpdate);
     });
     ['startDate', 'endDate'].forEach(function (id) {
       $(id).addEventListener('change', function () { markPreset(null); scheduleUpdate(); });
+    });
+
+    // ISA 유형을 고르면 비과세 한도 칸을 그 값으로 채움
+    $('isaType').addEventListener('input', function (e) {
+      $('isaExempt').value = e.target.value;
+      scheduleUpdate();
     });
 
     // 시스템 다크모드가 바뀌면 차트 색을 다시 칠함
@@ -148,8 +157,15 @@
         dividend: (Number($('taxDiv').value) || 0) / 100,
         capital: (Number($('taxCap').value) || 0) / 100,
         deduction: Math.max(0, Number($('taxDeduction').value) || 0),
-        liquidate: $('taxLiquidate').checked
+        liquidate: $('taxLiquidate').checked,
+        account: $('account').value,
+        isaExempt: Math.max(0, Number($('isaExempt').value) || 0),
+        isaRate: (Number($('isaRate').value) || 0) / 100,
+        creditRate: (Number($('creditRate').value) || 0) / 100,
+        creditLimit: Math.max(0, Number($('creditLimit').value) || 0),
+        pensionRate: (Number($('pensionRate').value) || 0) / 100
       },
+      housing: $('housing').value,
       start: $('startDate').value,
       end: $('endDate').value
     };
@@ -179,6 +195,10 @@
     if (s.rawTotal === 0) { setStatus('비중을 하나 이상 입력하세요.', true); return; }
     if (s.initial === 0 && s.monthly === 0) { setStatus('처음 넣는 돈이나 매월 적립금을 입력하세요.', true); return; }
     $('taxFields').hidden = !s.tax.enabled;
+    // 선택한 계좌 종류의 입력칸만 보이기
+    Array.prototype.forEach.call(document.querySelectorAll('[data-account]'), function (el) {
+      el.hidden = el.dataset.account !== s.tax.account;
+    });
 
     // 선택한 종목의 데이터가 있는 기간으로 날짜 제한
     const range = availableRange(activeTickers(s.weights));
@@ -190,7 +210,7 @@
 
     const port = Backtest.runBacktest(DATA.tickers, s);
     if (!port) { setStatus('해당 기간에 데이터가 부족합니다. 기간을 넓혀주세요.', true); return; }
-    setStatus('');
+    setStatus(limitWarning(port, s));
 
     // 비교용: 각 ETF 100% 보유 (같은 기간·같은 비용·같은 적립금·같은 세금 조건)
     const series = [{ name: '내 포트폴리오', color: cssVar('--series-1'), res: port, main: true }];
@@ -208,6 +228,24 @@
         skipped.push(t);
       }
     });
+    // 주택가격지수 비교선: 같은 돈을 같은 날짜에 넣었다고 가정 (세금·거래비용 없음)
+    let housingMsg = '';
+    if (s.housing && HOUSING && HOUSING.series[s.housing]) {
+      const hs = HOUSING.series[s.housing];
+      const r = Backtest.runBacktest({ HOUSE: housingDaily(s.housing) }, {
+        weights: { HOUSE: 1 }, costs: {}, tradeCost: 0, rebalance: 'none',
+        initial: s.initial, monthly: s.monthly, tax: { enabled: false },
+        start: port.dates[0], end: port.dates[port.dates.length - 1]
+      });
+      if (r && r.dates[0] === port.dates[0]) {
+        series.push({ name: hs.name, color: cssVar('--series-5'), res: r, housing: true });
+      } else {
+        housingMsg = hs.name + ' 지수는 ' + hs.months[0] + '부터 있어 이 기간 비교에서 제외';
+      }
+    } else if (s.housing && !HOUSING) {
+      housingMsg = '주택가격 데이터(data/housing.json)가 아직 없습니다';
+    }
+
     // 수익률 지표는 "수익률 지수(index)"로 계산 → 적립금이 들어와도 수익률이 부풀려지지 않음
     series.forEach(function (x) {
       x.stats = Backtest.computeStats(x.res.dates, x.res.index);
@@ -233,6 +271,8 @@
     $('foot').textContent =
       '데이터: ' + DATA.source + ' · 갱신일 ' + DATA.updated +
       (skipped.length ? ' · ' + skipped.join(', ') + '는 이 기간 데이터가 없어 비교에서 제외' : '') +
+      (housingMsg ? ' · ' + housingMsg : '') +
+      (HOUSING ? ' · 주택: ' + HOUSING.source + ' (' + HOUSING.updated + ')' : '') +
       ' · 리밸런싱 ' + port.rebalanceCount + '회' +
       ' · 거래비용 ' + fmtMoneyKo(port.paid.fee) + ', 추가 비용 ' + fmtMoneyKo(port.paid.extraCost) +
       (s.tax.enabled ? '' : ' · 세금 미반영') +
@@ -245,17 +285,24 @@
   function renderTiles(p, s, showIrr) {
     const st = p.stats;
     const r = p.res;
-    const profit = r.finalValue - r.invested;
+    const profit = r.totalWealth - r.invested;
     const months = s.monthly > 0 ? Math.round((r.invested - s.initial) / s.monthly) : 0;
-    const taxTotal = r.paid.dividendTax + r.paid.capitalTax;
+    const taxTotal = r.paid.dividendTax + r.paid.capitalTax + r.paid.exitTax;
+    const acc = s.tax.enabled ? s.tax.account : 'none';
     const tiles = [
       { label: '투자원금', value: fmtMoneyKo(r.invested),
         detail: s.monthly > 0 ? '처음 ' + fmtMoneyKo(s.initial) + ' + 월 ' + fmtMoneyKo(s.monthly) + ' × ' + months + '회'
                               : st.years.toFixed(1) + '년 거치' },
       { label: '최종 금액', value: fmtMoneyKo(r.finalValue),
-        detail: s.tax.enabled ? (s.tax.liquidate ? '전부 매도·양도세 정산 후' : '보유 중 평가금액 (미실현 이익 세금 전)') : '세전 평가금액' },
+        detail: {
+          none: '세전 평가금액',
+          overseas: s.tax.liquidate ? '전부 매도·양도세 정산 후' : '보유 중 평가금액 (미실현 이익 세금 전)',
+          isa: '종료일 해지·세금 정산 후',
+          pension: '종료일 전액 인출·세금 정산 후'
+        }[acc] },
       { label: '수익금', value: (profit >= 0 ? '+' : '−') + fmtMoneyKo(Math.abs(profit)),
-        detail: '원금 대비 ' + fmtPct(r.invested > 0 ? profit / r.invested : 0) },
+        detail: '원금 대비 ' + fmtPct(r.invested > 0 ? profit / r.invested : 0) +
+          (acc === 'pension' ? ' · 세액공제 환급 포함' : '') },
       { label: '연평균 수익률 (CAGR)', value: fmtPct(st.cagr),
         detail: s.monthly > 0 ? '운용 성과 기준 (적립 시점 영향 제외)' : '매년 이만큼 복리로 불어난 셈' }
     ];
@@ -266,7 +313,12 @@
     tiles.push({ label: '최대낙폭 (MDD)', value: fmtPct(st.mdd), detail: st.mddPeak + ' → ' + st.mddTrough });
     if (s.tax.enabled) {
       tiles.push({ label: '낸 세금 합계', value: fmtMoneyKo(taxTotal),
-        detail: '배당세 ' + fmtMoneyKo(r.paid.dividendTax) + ' · 양도세 ' + fmtMoneyKo(r.paid.capitalTax) });
+        detail: acc === 'overseas'
+          ? '배당세 ' + fmtMoneyKo(r.paid.dividendTax) + ' · 양도세 ' + fmtMoneyKo(r.paid.capitalTax)
+          : '배당 원천징수 ' + fmtMoneyKo(r.paid.dividendTax) + ' · ' + (acc === 'isa' ? '해지 시 ' : '인출 시 ') + fmtMoneyKo(r.paid.exitTax) });
+    }
+    if (acc === 'pension') {
+      tiles.push({ label: '세액공제 환급', value: fmtMoneyKo(r.refund), detail: '계좌 밖으로 받은 돈 (최종 금액과 별도)' });
     }
     tiles.push({ label: '변동성 (연)', value: fmtPct(st.volatility, false), detail: '샤프 ' + st.sharpe.toFixed(2) });
 
@@ -361,7 +413,8 @@
 
   function renderStatsTable(series, s, showIrr) {
     const taxOn = s.tax.enabled;
-    const head = '<thead><tr><th>구분</th><th>최종 금액</th><th>수익률(원금 대비)</th><th>CAGR</th>' +
+    const pension = taxOn && s.tax.account === 'pension';
+    const head = '<thead><tr><th>구분</th><th>최종 금액' + (pension ? ' (환급 포함)' : '') + '</th><th>수익률(원금 대비)</th><th>CAGR</th>' +
       (showIrr ? '<th>IRR</th>' : '') +
       '<th>MDD</th><th>MDD 고점→저점</th><th>MDD 회복</th><th>변동성</th><th>샤프</th>' +
       (taxOn ? '<th>세금 합계</th>' : '') + '</tr></thead>';
@@ -369,16 +422,17 @@
       const st = x.stats;
       const r = x.res;
       return '<tr><td>' + nameCell(x) + '</td>' +
-        '<td>' + fmtMoney(r.finalValue) + '</td>' +
-        '<td>' + colored(r.invested > 0 ? r.finalValue / r.invested - 1 : 0) + '</td>' +
+        '<td>' + fmtMoney(r.totalWealth) + '</td>' +
+        '<td>' + colored(r.invested > 0 ? r.totalWealth / r.invested - 1 : 0) + '</td>' +
         '<td>' + colored(st.cagr) + '</td>' +
         (showIrr ? '<td>' + (r.irr === null ? '—' : colored(r.irr)) + '</td>' : '') +
         '<td>' + colored(st.mdd) + '</td>' +
         '<td class="muted">' + st.mddPeak + ' → ' + st.mddTrough + '</td>' +
         '<td class="muted">' + (st.mddRecovery || '미회복') + '</td>' +
-        '<td>' + fmtPct(st.volatility, false) + '</td>' +
-        '<td>' + st.sharpe.toFixed(2) + '</td>' +
-        (taxOn ? '<td>' + fmtMoney(r.paid.dividendTax + r.paid.capitalTax) + '</td>' : '') + '</tr>';
+        // 주택지수는 월간 데이터라 일별 변동성·샤프를 계산하면 왜곡되므로 표시하지 않음
+        '<td>' + (x.housing ? '<span class="muted">—</span>' : fmtPct(st.volatility, false)) + '</td>' +
+        '<td>' + (x.housing ? '<span class="muted">—</span>' : st.sharpe.toFixed(2)) + '</td>' +
+        (taxOn ? '<td>' + (x.housing ? '<span class="muted">미반영</span>' : fmtMoney(r.paid.dividendTax + r.paid.capitalTax + r.paid.exitTax)) + '</td>' : '') + '</tr>';
     }).join('');
     $('statsTable').innerHTML = head + '<tbody>' + rows + '</tbody>';
   }
@@ -489,7 +543,49 @@
     });
   }
 
-  // ───────────────────────── 7. 작은 도우미 함수들 ─────────────────────────
+  // ───────────────────────── 7. 주택지수·납입한도 ─────────────────────────
+
+  /*
+   * 월간 주택가격지수를 ETF와 같은 일별 달력에 맞춰 펼친다.
+   * KB 월간 지수는 매월 중순 기준으로 조사되므로, 각 달의 값은 그달 15일부터 다음 달 14일까지 유지.
+   */
+  function housingDaily(key) {
+    if (housingCache[key]) return housingCache[key];
+    const hs = HOUSING.series[key];
+    const calendar = DATA.tickers.SPY.dates; // 가장 긴 거래일 달력
+    const dates = [], close = [];
+    let k = -1;
+    calendar.forEach(function (d) {
+      while (k + 1 < hs.months.length && hs.months[k + 1] + '-15' <= d) k++;
+      if (k >= 0) { dates.push(d); close.push(hs.values[k]); }
+    });
+    housingCache[key] = { dates: dates, close: close };
+    return housingCache[key];
+  }
+
+  // ISA·연금저축 납입 한도를 넘으면 경고 문구 반환
+  function limitWarning(res, s) {
+    if (!s.tax.enabled) return '';
+    const years = Object.keys(res.contribByYear).sort();
+    if (s.tax.account === 'pension') {
+      const over = years.filter(function (y) { return res.contribByYear[y] > 18000000; });
+      if (over.length) return '⚠ ' + over[0] + '년부터 연금저축 납입 한도(연 1,800만원, IRP 합산)를 넘습니다' +
+        '. 실제로는 넣을 수 없는 금액이니 적립금을 줄여 보세요.';
+    }
+    if (s.tax.account === 'isa') {
+      // 연 2,000만원, 안 쓴 한도는 이월, 총 1억원
+      let cum = 0;
+      const over = years.filter(function (y, i) {
+        cum += res.contribByYear[y];
+        return cum > 20000000 * (i + 1) || cum > 100000000;
+      });
+      if (over.length) return '⚠ ' + over[0] + '년부터 ISA 납입 한도(연 2,000만원·이월 가능, 총 1억원)를 넘습니다' +
+        '. 실제로는 넣을 수 없는 금액이니 투자금을 줄여 보세요.';
+    }
+    return '';
+  }
+
+  // ───────────────────────── 8. 작은 도우미 함수들 ─────────────────────────
 
   function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -501,6 +597,7 @@
   }
 
   function fmtPct(v, signed) {
+    if (Math.abs(v) < 0.0005) v = 0;   // -0.0% 같은 표기 방지
     const s = (v * 100).toFixed(1) + '%';
     return signed !== false && v > 0 ? '+' + s : s;
   }
@@ -539,7 +636,7 @@
     $('status').classList.toggle('error', !!isError);
   }
 
-  // ───────────────────────── 8. 시작 ─────────────────────────
+  // ───────────────────────── 9. 시작 ─────────────────────────
 
   function loadData() {
     fetch('data/prices.json')
@@ -549,6 +646,13 @@
       })
       .then(function (json) {
         DATA = json;
+        // 주택가격 데이터는 선택 사항: 없거나 실패해도 ETF 백테스트는 그대로 동작
+        return fetch('data/housing.json')
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .catch(function () { return null; });
+      })
+      .then(function (housing) {
+        HOUSING = housing;
         update(); // 처음엔 "전체 기간" (activePreset = 0)
       })
       .catch(function (err) {

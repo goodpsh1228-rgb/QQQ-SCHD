@@ -17,6 +17,7 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
+  --series-5: #e87ba4;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -36,6 +37,7 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
+    --series-5: #d55181;
   }
 }
 :root[data-theme="dark"] {
@@ -55,6 +57,7 @@
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
+  --series-5: #d55181;
 }
 
 /* ── 기본 ── */
@@ -101,7 +104,7 @@ h2 { font-size: 1rem; margin: 0 0 10px; }
 /* ── 입력 요소 ── */
 .field { display: block; margin: 8px 0; }
 .check { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; margin: 6px 0; }
-#taxFields[hidden] { display: none; }
+#taxFields[hidden], [data-account][hidden] { display: none; }
 .field span { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 2px; }
 input[type="number"], input[type="date"], select {
   width: 100%;

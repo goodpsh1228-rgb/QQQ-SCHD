@@ -68,23 +68,94 @@
 
       <section>
         <h2>세금</h2>
-        <label class="check"><input type="checkbox" id="taxOn"> 세금 반영 (해외주식 직투, 일반 계좌)</label>
+        <label class="check"><input type="checkbox" id="taxOn"> 세금 반영</label>
         <div id="taxFields">
           <label class="field">
-            <span>배당소득세 (%) — 미국 원천징수</span>
+            <span>계좌 종류</span>
+            <select id="account">
+              <option value="overseas">해외주식 직투 (일반 계좌)</option>
+              <option value="isa">ISA (중개형)</option>
+              <option value="pension">연금저축</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>배당 원천징수 (%) — 미국 배당에서 떼는 세금</span>
             <input type="number" id="taxDiv" value="15" min="0" max="50" step="0.1">
           </label>
-          <label class="field">
-            <span>양도소득세 (%) — 지방세 포함</span>
-            <input type="number" id="taxCap" value="22" min="0" max="50" step="0.1">
-          </label>
-          <label class="field">
-            <span>양도세 연간 기본공제 (원)</span>
-            <input type="number" id="taxDeduction" value="2500000" min="0" step="500000">
-          </label>
-          <label class="check"><input type="checkbox" id="taxLiquidate" checked> 종료일에 전부 매도한다고 보고 양도세 계산</label>
-          <p class="note">리밸런싱으로 판 이익은 그해 손익을 합산해 다음 해 초에 납부한 것으로 계산합니다 (실제 납부는 5월). 취득가는 평균단가 기준이며, 환율 변동과 금융소득종합과세는 반영하지 않습니다.</p>
+
+          <!-- 해외 직투 전용 -->
+          <div data-account="overseas">
+            <label class="field">
+              <span>양도소득세 (%) — 지방세 포함</span>
+              <input type="number" id="taxCap" value="22" min="0" max="50" step="0.1">
+            </label>
+            <label class="field">
+              <span>양도세 연간 기본공제 (원)</span>
+              <input type="number" id="taxDeduction" value="2500000" min="0" step="500000">
+            </label>
+            <label class="check"><input type="checkbox" id="taxLiquidate" checked> 종료일에 전부 매도한다고 보고 양도세 계산</label>
+            <p class="note">리밸런싱으로 판 이익은 그해 손익을 합산해 다음 해 초에 납부한 것으로 계산합니다 (실제 납부는 5월). 취득가는 평균단가 기준이며, 환율 변동과 금융소득종합과세는 반영하지 않습니다.</p>
+          </div>
+
+          <!-- ISA 전용 -->
+          <div data-account="isa">
+            <label class="field">
+              <span>ISA 유형 (비과세 한도)</span>
+              <select id="isaType">
+                <option value="2000000">일반형 — 200만원</option>
+                <option value="4000000">서민형·농어민 — 400만원</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>비과세 한도 (원)</span>
+              <input type="number" id="isaExempt" value="2000000" min="0" step="500000">
+            </label>
+            <label class="field">
+              <span>한도 초과 이익 세율 (%) — 분리과세</span>
+              <input type="number" id="isaRate" value="9.9" min="0" max="50" step="0.1">
+            </label>
+            <p class="note">ISA에서는 미국 ETF를 직접 살 수 없어, 같은 지수를 따르는 국내 상장 ETF(예: 미국나스닥100·미국배당다우존스·미국S&amp;P500)로 투자한다고 가정합니다. 운용 중에는 매매차익에 세금이 없고, 종료일에 해지하며 순이익 중 비과세 한도 초과분에 과세합니다. ISA는 2016년(중개형은 2021년)에 생겼으므로 그 이전 기간은 가상 계산입니다. 납입 한도는 연 2,000만원(총 1억원)이며, 세법 개정으로 한도·세율이 바뀔 수 있으니 값을 직접 고쳐 쓰세요.</p>
+          </div>
+
+          <!-- 연금저축 전용 -->
+          <div data-account="pension">
+            <label class="field">
+              <span>세액공제율 (%)</span>
+              <select id="creditRate">
+                <option value="16.5">16.5% — 총급여 5,500만원 이하</option>
+                <option value="13.2">13.2% — 총급여 5,500만원 초과</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>세액공제 대상 한도 (연, 원)</span>
+              <input type="number" id="creditLimit" value="6000000" min="0" step="1000000">
+            </label>
+            <label class="field">
+              <span>인출 방식 (세율)</span>
+              <select id="pensionRate">
+                <option value="5.5">연금 수령, 55~69세 — 5.5%</option>
+                <option value="4.4">연금 수령, 70~79세 — 4.4%</option>
+                <option value="3.3">연금 수령, 80세 이상 — 3.3%</option>
+                <option value="16.5">중도 해지 — 16.5%</option>
+              </select>
+            </label>
+            <p class="note">국내 상장 ETF로 투자한다고 가정합니다. 매년 납입액 중 한도까지 세액공제를 받고, 환급금은 계좌 밖에서 받은 것으로 따로 표시합니다. 종료일에 전액 인출한다고 보고, 세액공제 받은 원금과 수익에 위 세율을 매깁니다 (공제 안 받은 원금은 비과세). 연 1,500만원 초과 수령 시 과세 방식, 납입 한도(연 1,800만원, IRP 합산)는 단순화했습니다.</p>
+          </div>
         </div>
+      </section>
+
+      <section>
+        <h2>주택가격 비교</h2>
+        <label class="field">
+          <span>같은 돈을 주택가격지수에 넣었다면?</span>
+          <select id="housing">
+            <option value="">비교 안 함</option>
+            <option value="SEOUL_APT" selected>서울 아파트</option>
+            <option value="SEOUL_ALL">서울 주택종합</option>
+            <option value="KOREA_APT">전국 아파트</option>
+          </select>
+        </label>
+        <p class="note" id="housingNote">KB부동산 월간 매매가격지수입니다. 가격 변동만 반영하며 임대수익(또는 거주 가치), 취득세·보유세·중개수수료, 대출 레버리지는 빠져 있어 실제 주택 투자 수익과 다릅니다.</p>
       </section>
 
       <section>

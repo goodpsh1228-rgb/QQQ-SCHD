@@ -29,42 +29,16 @@ SERIES = [
 ]
 
 
-# API 기본값은 최근 2년치만 준다. 기간 파라미터 형식이 공개돼 있지 않아
-# 후보 몇 가지를 시도해 가장 긴 결과를 쓴다.
-PERIOD_CANDIDATES = [
-    {},
-    {"기간": "0"},
-    {"기간": "전체"},
-    {"기간": "99"},
-    {"기간": "50"},
-    {"기간": "40"},
-    {"조회시작일자": "198601", "조회종료일자": "209912"},
-    {"시작년월": "198601", "종료년월": "209912"},
-]
-
-
 def fetch_table(kind: str) -> dict:
-    """매물종별(kind)의 월간 매매가격지수 전체 지역 표를 받아온다 (가장 긴 기간)."""
-    best = None
-    for extra in PERIOD_CANDIDATES:
-        params = {"월간주간구분코드": "01", "매물종별구분": kind, "매매전세코드": "01", **extra}
-        try:
-            res = requests.get(URL, params=params, headers=HEADERS, timeout=60)
-            res.raise_for_status()
-            body = res.json()["dataBody"]
-            if str(body.get("resultCode")) != "11000":
-                print(f"  {extra}: 결과코드 {body.get('resultCode')}")
-                continue
-            data = body["data"]
-            n = len(data["날짜리스트"])
-            print(f"  {extra}: {n}개월 ({data['날짜리스트'][0]} ~ {data['날짜리스트'][-1]})")
-            if best is None or n > len(best["날짜리스트"]):
-                best = data
-        except Exception as e:  # 한 후보가 실패해도 다음 후보 시도
-            print(f"  {extra}: 실패 {e}")
-    if best is None:
-        raise RuntimeError("KB API에서 데이터를 받지 못했습니다")
-    return best
+    """매물종별(kind)의 월간 매매가격지수 전체 지역 표를 받아온다."""
+    # 기간: 최근 몇 년치를 받을지 (기본값은 2년). 99 → 조사 시작(1986년)부터 전부
+    params = {"월간주간구분코드": "01", "매물종별구분": kind, "매매전세코드": "01", "기간": "99"}
+    res = requests.get(URL, params=params, headers=HEADERS, timeout=60)
+    res.raise_for_status()
+    body = res.json()["dataBody"]
+    if str(body.get("resultCode")) != "11000":
+        raise RuntimeError(f"KB API 오류: {body}")
+    return body["data"]
 
 
 def pick_region(table: dict, region: str) -> dict:
